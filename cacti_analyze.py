@@ -197,6 +197,11 @@ def main():
                "max_pct": "", "status": ""}
         if not g:
             row["status"] = "NO_GRAPH"
+            # help troubleshooting: graphs that mention the router at all
+            nr = norm(it["router"])
+            cand = [x["title"] for x in graphs if nr in x["ntitle"]][:3]
+            if cand:
+                row["graph_title"] = "candidates: " + " | ".join(cand)
             out_rows.append(row)
             continue
         used.add(g["id"])
@@ -253,7 +258,13 @@ def parse_speed_from_title(title):
     # e.g. "router1 - Traffic - Gi0/1 (1G)" or "... 1000 Mbps"
     m = re.search(r"[\(\[]\s*(\d+(?:[.,]\d+)?\s*[kKmMgGtT](?:bit|bps|b/s|b)?)\s*[\)\]]", title) \
         or re.search(r"(\d+(?:[.,]\d+)?\s*[kKmMgGtT](?:bit|bps|b/s))", title)
-    return parse_speed(m.group(1)) if m else None
+    if m:
+        return parse_speed(m.group(1))
+    # Huawei style port names: 25GE0/7/0, 100GE1/0/1, GE0/0/1 (1G)
+    m = re.search(r"(?<![A-Za-z0-9])(\d*)GE\d", title)
+    if m:
+        return float(m.group(1) or 1) * 1e9
+    return None
 
 
 def column(rows, i, mult):
