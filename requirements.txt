@@ -1,1 +1,2 @@
 requests>=2.25
+openpyxl>=3.0
