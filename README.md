@@ -94,9 +94,12 @@ python cacti_analyze.py --data-dir data/2026-11 --list links.csv --out result.xl
 ## Matching
 
 Each end of a link is first matched exactly: the graph title must contain
-the router name and the interface name. If an end has no exact match, a graph
-whose title contains both router names of the link is used instead. The
-`match` column shows `exact` or `router_pair`; `router_pair (N graphs)` means
+the router name and the interface name. If an end has no exact match but the
+other end of the same link matched a graph whose title also names this
+router, that graph is used (`other_end`; graph titles are often truncated, so
+the far-end interface may be cut off). Otherwise a graph whose title contains
+both router names of the link is used, preferring graphs no other link matched
+exactly. The `match` column shows `exact`, `other_end` or `router_pair`; `router_pair (N graphs)` means
 several graphs qualified, the shortest title was used and the others are
 listed in `candidates`. For unmatched ends, `candidates` lists graphs that
 mention the router.

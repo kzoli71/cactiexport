@@ -106,7 +106,8 @@ def norm(s):
                         ("hundredgige", "hu"), ("fortygigabitethernet", "fo"),
                         ("port-channel", "po"), ("bundle-ether", "be")):
         s = s.replace(long, short)
-    return re.sub(r"[^a-z0-9/.:]", "", s)
+    # separators become a single space so names keep their boundaries
+    return re.sub(r"[^a-z0-9/.:]+", " ", s).strip()
 
 
 # Default speed by interface name prefix in the link list (case-insensitive).
@@ -209,16 +210,28 @@ def main():
     used = set()
     by_graph = {}
     out_rows = []
+    exact = {id(it): match(it, graphs) for it in items}
+    exact_ids = {g["id"] for g in exact.values() if g}
     for it in items:
         row = dict.fromkeys(COLUMNS, None)
         row.update(line=it["line"], side=it["side"], link=it["link"],
                    router=it["router"], interface=it["iface"])
-        g = match(it, graphs)
+        g = exact[id(it)]
+        partner = next((x for x in items if x["line"] == it["line"] and x is not it), None)
+        pg = exact.get(id(partner)) if partner else None
         if g:
             row["match"] = "exact"
+        elif pg and norm(it["router"]) in pg["ntitle"]:
+            # the other end matched exactly and its graph names this router too
+            # (titles are often truncated, so this end's interface may be cut off)
+            g = pg
+            row["match"] = "other_end"
         else:
-            # fallback: a graph whose title names both routers of the link
+            # fallback: a graph whose title names both routers of the link,
+            # preferring graphs no other link matched exactly
             pair = match_router_pair(it, graphs)
+            free = [x for x in pair if x["id"] not in exact_ids]
+            pair = free or pair
             if pair:
                 g = pair[0]
                 row["match"] = "router_pair" if len(pair) == 1 else f"router_pair ({len(pair)} graphs)"
