@@ -96,6 +96,7 @@ python cacti_analyze.py --data-dir data/2026-11 --list links.csv --speeds speeds
 | `--default-speed` | 10G | Speed used when no other source is known |
 | `--days` | all | Only use the last N days of the downloaded data |
 | `--bytes` | off | Graph values are bytes/s instead of bits/s |
+| `--keep-irregular` | off | Keep samples at irregular timestamps (DST change), dropped by default |
 
 ## Matching
 

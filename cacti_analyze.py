@@ -59,6 +59,24 @@ def parse_xport(txt):
     return title, cols, rows
 
 
+def drop_irregular(rows):
+    """Drop samples whose distance to the previous sample differs from the
+    normal step. Exports are in local time; at the DST change one bucket is an
+    hour short or long and its rate can be several times the real traffic.
+    Returns (rows, number_dropped)."""
+    ts = [r[0] for r in rows]
+    gaps = [b - a for a, b in zip(ts, ts[1:]) if a and b]
+    if not gaps:
+        return rows, 0
+    step = max(set(gaps), key=gaps.count)
+    keep = [rows[0]]
+    for prev, r in zip(rows, rows[1:]):
+        if r[0] and prev[0] and r[0] - prev[0] != step:
+            continue
+        keep.append(r)
+    return keep, len(rows) - len(keep)
+
+
 def pick_in_out(cols):
     """Find inbound/outbound column indexes by name."""
     i_in = i_out = None
@@ -187,6 +205,9 @@ def main():
     ap.add_argument("--days", type=float, help="only use the last N days of the downloaded data")
     ap.add_argument("--metric", choices=["peak", "avg", "p95"], default="avg")
     ap.add_argument("--threshold", type=float, default=50.0, help="percent")
+    ap.add_argument("--keep-irregular", action="store_true",
+                    help="keep samples whose spacing differs from the export step "
+                         "(dropped by default: the DST change produces bogus spikes)")
     ap.add_argument("--bytes", action="store_true",
                     help="graph values are bytes/s (multiply by 8); default assumes bits/s")
     ap.add_argument("--out", default="result.xlsx", help="result file; .xlsx (needs openpyxl) or .csv")
@@ -205,6 +226,7 @@ def main():
     mult = 8 if a.bytes else 1
 
     graphs = []
+    dropped_total = 0
     for fn in files:
         gid = int(re.search(r"\d+", fn).group())
         with open(os.path.join(a.data_dir, fn), encoding="utf-8-sig") as f:
@@ -218,10 +240,16 @@ def main():
             if last:
                 cut = last - timedelta(days=a.days)
                 rows = [r for r in rows if r[0] and r[0] >= cut]
+        if not a.keep_irregular:
+            rows, dropped = drop_irregular(rows)
+            dropped_total += dropped
         i_in, i_out = pick_in_out(cols)
         graphs.append({"id": gid, "title": title, "ntitle": norm(title),
                        "in": stats(column(rows, i_in, mult)), "out": stats(column(rows, i_out, mult))})
     print(f"{len(graphs)} graphs loaded from {a.data_dir}.")
+    if dropped_total:
+        print(f"  {dropped_total} samples at irregular timestamps (e.g. DST change) ignored; "
+              "use --keep-irregular to keep them")
 
     items = load_list(a.list)
     speeds = load_speeds(a.speeds) if a.speeds else {}
