@@ -29,7 +29,10 @@ python cacti_download.py \
 ```
 
 Copy `--tree-url` from the browser after selecting the branch in the tree
-view. If the tree cannot be parsed, pass a text file of graph ids with
+view. Both the tree root (`node=tree_anchor-N`) and a branch
+(`node=tbranch-N`) work: every node below it is walked and the graphs of
+each are collected. Use `--debug-dir` to save the fetched pages when no
+graphs are found. If the tree cannot be parsed, pass a text file of graph ids with
 `--graph-ids` instead (one `local_graph_id` per line).
 
 The directory gets one `graph_<id>.csv` per graph and an `index.csv` with the
@@ -43,6 +46,7 @@ interrupted download.
 | `--skip-existing` | off | Skip graphs already downloaded |
 | `--realm` | none | Login realm, e.g. for LDAP |
 | `--insecure` | off | Skip TLS verification (self-signed certificate) |
+| `--debug-dir` | none | Save fetched tree pages for troubleshooting |
 | `--ca-cert` | none | Verify against this PEM certificate instead (e.g. the exported self-signed cert) |
 
 The password is prompted for when `--password` is omitted.

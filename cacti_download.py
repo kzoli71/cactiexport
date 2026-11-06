@@ -15,6 +15,7 @@ Example:
 import argparse
 import csv
 import getpass
+import html as htmllib
 import io
 import os
 import re
@@ -27,11 +28,20 @@ import requests
 
 CSRF_RE = re.compile(r"""name=['"]__csrf_magic['"]\s+value=['"]([^'"]+)['"]""")
 CSRF_JS_RE = re.compile(r"""csrfMagicToken\s*=\s*['"]([^'"]+)['"]""")
-GRAPH_ID_RE = re.compile(r"local_graph_id=(\d+)")
+# Cacti 1.2 renders graphs as <div class='graphWrapper' id='wrapper_123' graph_id='123'>
+# and loads the images via AJAX, so look for several patterns.
+GRAPH_ID_RES = [
+    re.compile(r"local_graph_id=(\d+)"),
+    re.compile(r"""graph_id=['"](\d+)['"]"""),
+    re.compile(r"wrapper_(\d+)"),
+]
+LI_ID_RE = re.compile(r"""<li[^>]*\bid=['"]((?:tbranch|tree_anchor)-[^'"]+)['"]""")
+TREE_HREF_RE = re.compile(r"""href=['"]([^'"]*graph_view\.php\?[^'"]*action=tree[^'"]*)['"]""")
 
 
 class Cacti:
-    def __init__(self, base, verify=True, delay=0.2):
+    def __init__(self, base, verify=True, delay=0.2, debug_dir=None):
+        self.debug_dir = debug_dir
         self.base = base.rstrip("/") + "/"
         self.s = requests.Session()
         self.s.verify = verify
@@ -64,30 +74,81 @@ class Cacti:
         time.sleep(self.delay)
         return r.text
 
-    def graph_ids_from_tree(self, tree_url):
-        """Collect graph ids from a tree branch URL copied from the browser.
+    def _graph_ids(self, page_html):
+        found = []
+        for rx in GRAPH_ID_RES:
+            found.extend(int(x) for x in rx.findall(page_html))
+        return list(dict.fromkeys(found))
 
-        Cacti 1.x serves the right-hand pane via action=tree_content and
-        paginates it; request a large page size and walk pages until no new
-        ids appear.
+    def _dump(self, name, text):
+        if self.debug_dir:
+            os.makedirs(self.debug_dir, exist_ok=True)
+            with open(os.path.join(self.debug_dir, name), "w", encoding="utf-8") as f:
+                f.write(text)
+
+    def tree_nodes(self, tree_id, start_node):
+        """Walk the tree with action=get_node (the jstree AJAX call) and return
+        the query parameters of every node below start_node."""
+        params = []
+        seen = set()
+        queue = ["#" if start_node.startswith("tree_anchor") else start_node]
+        while queue:
+            node = queue.pop(0)
+            if node in seen:
+                continue
+            seen.add(node)
+            page = self.get("graph_view.php", action="get_node", tree_id=tree_id, id=node)
+            self._dump(f"get_node_{len(seen)}.html", page)
+            for child in LI_ID_RE.findall(page):
+                if child not in seen:
+                    queue.append(child)
+            for href in TREE_HREF_RE.findall(page):
+                q = {k: v[0] for k, v in parse_qs(urlparse(htmllib.unescape(href)).query).items()}
+                if q.get("node") and q not in params:
+                    params.append(q)
+            if len(seen) > 5000:
+                break
+        return params
+
+    def graph_ids_from_tree(self, tree_url):
+        """Collect graph ids from a tree URL copied from the browser.
+
+        The URL may point at the tree root (node=tree_anchor-N) or a branch
+        (node=tbranch-N). The tree is walked node by node and the right-hand
+        pane of every node (action=tree_content) is read page by page.
         """
+        tree_url = htmllib.unescape(tree_url)
         u = urlparse(tree_url)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
-        candidates = [
-            dict(q, action="tree_content", graphs="1000", columns="1", thumbnails="false"),
-            dict(q, graphs="1000"),
-        ]
+        node = q.get("node", "")
+        tree_id = q.get("tree_id")
+        m = re.match(r"tree_anchor-(\d+)", node)
+        if m:
+            tree_id = m.group(1)
+        if not tree_id and node.startswith("tbranch"):
+            # find the tree id from the tree page itself
+            page = self.get(tree_url)
+            m = re.search(r"tree_anchor-(\d+)", page)
+            tree_id = m.group(1) if m else None
+
+        node_params = [q]
+        if tree_id and node:
+            node_params += self.tree_nodes(tree_id, node)
+        print(f"{len(node_params)} tree nodes to read.")
+
         ids = []
-        for params in candidates:
-            for page in range(1, 51):
-                params["page"] = str(page)
-                html = self.get(urlunparse(u._replace(query=urlencode(params))))
-                new = [i for i in dict.fromkeys(int(x) for x in GRAPH_ID_RE.findall(html)) if i not in ids]
+        for n, base in enumerate(node_params, 1):
+            for page_no in range(1, 51):
+                params = dict(base, action="tree_content", graphs="1000", columns="1",
+                              thumbnails="false", page=str(page_no))
+                if tree_id:
+                    params.setdefault("tree_id", tree_id)
+                page = self.get(urljoin(self.base, "graph_view.php") + "?" + urlencode(params))
+                self._dump(f"tree_content_{n}_{page_no}.html", page)
+                new = [i for i in self._graph_ids(page) if i not in ids]
                 if not new:
                     break
                 ids.extend(new)
-            if ids:
-                break
         return ids
 
     def xport(self, graph_id, start, end):
@@ -116,6 +177,7 @@ def main():
     ap.add_argument("--out-dir", default="data", help="directory for the downloaded CSV files")
     ap.add_argument("--skip-existing", action="store_true", help="do not download graphs already in --out-dir")
     ap.add_argument("--insecure", action="store_true", help="skip TLS verification (self-signed cert)")
+    ap.add_argument("--debug-dir", help="save the fetched tree HTML pages here for troubleshooting")
     ap.add_argument("--ca-cert", help="PEM file of the server's self-signed certificate / CA to verify against")
     a = ap.parse_args()
 
@@ -124,7 +186,7 @@ def main():
     if a.insecure:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    c = Cacti(a.url, verify=False if a.insecure else (a.ca_cert or True))
+    c = Cacti(a.url, verify=False if a.insecure else (a.ca_cert or True), debug_dir=a.debug_dir)
     c.login(a.user, a.password or getpass.getpass("Cacti password: "), a.realm)
     print("Logged in.")
 
@@ -135,7 +197,7 @@ def main():
         ids = c.graph_ids_from_tree(a.tree_url)
     print(f"{len(ids)} graphs found.")
     if not ids:
-        sys.exit("No graphs found. Check the tree URL, or use --graph-ids.")
+        sys.exit("No graphs found. Check the tree URL, run again with --debug-dir to save the pages, or use --graph-ids.")
 
     os.makedirs(a.out_dir, exist_ok=True)
     end = int(time.time())
