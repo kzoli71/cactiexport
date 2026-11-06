@@ -151,6 +151,21 @@ class Cacti:
                 ids.extend(new)
         return ids
 
+    def graph_ids_from_list(self, title_filter=""):
+        """Collect graph ids from the graph list view (graph_view.php?action=list),
+        which shows every graph the user may view, independent of the trees."""
+        ids = []
+        for page_no in range(1, 1000):
+            page = self.get("graph_view.php", action="list", rows="1000", page=str(page_no),
+                            rfilter=title_filter, host_id="-1", graph_template_id="-1",
+                            graph_list="", graph_add="", graph_remove="")
+            self._dump(f"graph_list_{page_no}.html", page)
+            new = [i for i in self._graph_ids(page) if i not in ids]
+            if not new:
+                break
+            ids.extend(new)
+        return ids
+
     def xport(self, graph_id, start, end):
         return self.get("graph_xport.php", local_graph_id=graph_id, rra_id=0,
                         view_type="tree", graph_start=start, graph_end=end)
@@ -173,6 +188,10 @@ def main():
     ap.add_argument("--realm", help="login realm (e.g. for LDAP), if needed")
     ap.add_argument("--tree-url", help="tree branch URL copied from the browser")
     ap.add_argument("--graph-ids", help="text file with one local_graph_id per line (alternative to --tree-url)")
+    ap.add_argument("--all", action="store_true",
+                    help="take every graph the user can view from the graph list view instead of the tree")
+    ap.add_argument("--title-filter", default="",
+                    help="with --all: only graphs whose title matches this regex (Cacti 'Search' filter)")
     ap.add_argument("--days", type=float, default=30, help="look-back period in days")
     ap.add_argument("--out-dir", default="data", help="directory for the downloaded CSV files")
     ap.add_argument("--skip-existing", action="store_true", help="do not download graphs already in --out-dir")
@@ -181,8 +200,8 @@ def main():
     ap.add_argument("--ca-cert", help="PEM file of the server's self-signed certificate / CA to verify against")
     a = ap.parse_args()
 
-    if not a.tree_url and not a.graph_ids:
-        ap.error("give --tree-url or --graph-ids")
+    if not a.tree_url and not a.graph_ids and not a.all:
+        ap.error("give --tree-url, --all or --graph-ids")
     if a.insecure:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -190,7 +209,9 @@ def main():
     c.login(a.user, a.password or getpass.getpass("Cacti password: "), a.realm)
     print("Logged in.")
 
-    if a.graph_ids:
+    if a.all:
+        ids = c.graph_ids_from_list(a.title_filter)
+    elif a.graph_ids:
         with open(a.graph_ids) as f:
             ids = [int(x) for x in re.findall(r"\d+", f.read())]
     else:

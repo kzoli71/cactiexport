@@ -35,6 +35,10 @@ each are collected. Use `--debug-dir` to save the fetched pages when no
 graphs are found. If the tree cannot be parsed, pass a text file of graph ids with
 `--graph-ids` instead (one `local_graph_id` per line).
 
+To skip the tree entirely, `--all` takes every graph the user can view from
+the graph list view (`graph_view.php?action=list`); `--title-filter` narrows
+it with a regex on the graph title, for example `--all --title-filter "_To_"`.
+
 The directory gets one `graph_<id>.csv` per graph and an `index.csv` with the
 graph id, title and downloaded period. `--skip-existing` resumes an
 interrupted download.
@@ -43,6 +47,8 @@ interrupted download.
 | --- | --- | --- |
 | `--days` | 30 | Look-back period |
 | `--out-dir` | `data` | Target directory |
+| `--all` | off | Use all viewable graphs instead of a tree |
+| `--title-filter` | none | With `--all`: regex on the graph title |
 | `--skip-existing` | off | Skip graphs already downloaded |
 | `--realm` | none | Login realm, e.g. for LDAP |
 | `--insecure` | off | Skip TLS verification (self-signed certificate) |
