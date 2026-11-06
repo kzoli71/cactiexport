@@ -91,7 +91,7 @@ python cacti_analyze.py --data-dir data/2026-11 --list links.csv --speeds speeds
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--metric` | `avg` | `avg`, `peak` or `p95` |
+| `--metric` | `avg` | `avg`, `peak`, `p95` or `p85` (CSV output only; the workbook has a sheet for each) |
 | `--threshold` | 50 | Percent of interface speed |
 | `--default-speed` | 10G | Speed used when no other source is known |
 | `--days` | all | Only use the last N days of the downloaded data |
@@ -113,7 +113,8 @@ mention the router.
 
 ## Output
 
-An Excel workbook (`.xlsx`, default) or a semicolon-separated CSV, sorted by
+An Excel workbook (`.xlsx`, default) with one sheet per metric (`avg`,
+`peak`, `p95`, `p85`), or a semicolon-separated CSV for `--metric`, sorted by
 severity. In the workbook OVER rows are red, rows needing attention are
 yellow and router-pair matches are blue in the `match` column; a `settings`
 sheet records the parameters used.

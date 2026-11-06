@@ -97,8 +97,10 @@ def stats(values):
     v = sorted(x for x in values if x is not None)
     if not v:
         return None
-    k = max(0, int(round(0.95 * len(v))) - 1)
-    return {"peak": v[-1], "avg": sum(v) / len(v), "p95": v[k]}
+
+    def pct(p):  # nearest-rank percentile, as Cacti's Nth percentile
+        return v[max(0, int(round(p / 100 * len(v))) - 1)]
+    return {"peak": v[-1], "avg": sum(v) / len(v), "p95": pct(95), "p85": pct(85)}
 
 
 def parse_speed(text):
@@ -203,7 +205,8 @@ def main():
     ap.add_argument("--speeds", help="file with router,interface,speed lines (e.g. 10G) to look speeds up in")
     ap.add_argument("--default-speed", default="10G", help="speed used when none is known (default 10G)")
     ap.add_argument("--days", type=float, help="only use the last N days of the downloaded data")
-    ap.add_argument("--metric", choices=["peak", "avg", "p95"], default="avg")
+    ap.add_argument("--metric", choices=["avg", "peak", "p95", "p85"], default="avg",
+                    help="metric for CSV output; the xlsx gets one sheet per metric")
     ap.add_argument("--threshold", type=float, default=50.0, help="percent")
     ap.add_argument("--keep-irregular", action="store_true",
                     help="keep samples whose spacing differs from the export step "
@@ -261,120 +264,129 @@ def main():
         it["speed_rank"] = 2 if it["speed"] else 1 if file_speed else 0
         it["speed"] = it["speed"] or file_speed
     default_speed = parse_speed(a.default_speed)
-    used = set()
-    by_graph = {}
-    out_rows = []
-    exact = {id(it): match(it, graphs) for it in items}
-    rank = {}
+    def build(metric):
+        used = set()
+        by_graph = {}
+        out_rows = []
+        exact = {id(it): match(it, graphs) for it in items}
+        rank = {}
 
-    def fill_metrics(row, g, speed):
-        vin = g["in"][a.metric] if g["in"] else None
-        vout = g["out"][a.metric] if g["out"] else None
-        row.update(graph_id=g["id"], graph_title=g["title"], in_bps=vin, out_bps=vout,
-                   speed_gbps=speed / 1e9 if speed else None,
-                   in_pct=None, out_pct=None, max_pct=None)
-        if vin is None and vout is None:
-            row["status"] = "NO_DATA"
-        elif not speed:
-            row["status"] = "NO_SPEED"
-        else:
-            pin = round(100 * (vin or 0) / speed, 1)
-            pout = round(100 * (vout or 0) / speed, 1)
-            mx = max(pin, pout)
-            row.update(in_pct=pin, out_pct=pout, max_pct=mx,
-                       status="OVER" if mx > a.threshold else "OK")
-    exact_ids = {g["id"] for g in exact.values() if g}
-    for it in items:
-        row = dict.fromkeys(COLUMNS, None)
-        row.update(line=it["line"], side=it["side"], link=it["link"],
-                   router=it["router"], interface=it["iface"])
-        g = exact[id(it)]
-        partner = next((x for x in items if x["line"] == it["line"] and x is not it), None)
-        pg = exact.get(id(partner)) if partner else None
-        if g:
-            row["match"] = "exact"
-        elif pg and norm(it["router"]) in pg["ntitle"]:
-            # the other end matched exactly and its graph names this router too
-            # (titles are often truncated, so this end's interface may be cut off)
-            g = pg
-            row["match"] = "other_end"
-        else:
-            # fallback: a graph whose title names both routers of the link,
-            # preferring graphs no other link matched exactly
-            pair = match_router_pair(it, graphs)
-            free = [x for x in pair if x["id"] not in exact_ids]
-            pair = free or pair
-            if pair:
-                g = pair[0]
-                row["match"] = "router_pair" if len(pair) == 1 else f"router_pair ({len(pair)} graphs)"
-                if len(pair) > 1:
-                    row["candidates"] = " | ".join(x["title"] for x in pair[:5])
-        if not g:
-            row["status"] = "NO_GRAPH"
-            # help troubleshooting: graphs that mention the router at all
-            nr = norm(it["router"])
-            cand = [x["title"] for x in graphs if nr in x["ntitle"]][:5]
-            row["candidates"] = " | ".join(cand) or None
-            out_rows.append(row)
-            continue
-        used.add(g["id"])
-        # the graph title often names both ends of the link: report it once
-        prev = by_graph.get((it["line"], g["id"]))
-        if prev:
-            prev["side"] += "+" + it["side"]
-            prev["router"] += " / " + it["router"]
-            prev["interface"] += " / " + it["iface"]
-            if prev["match"] != row["match"]:
-                prev["match"] += " / " + row["match"]
-            # keep the speed from the more specific source of the two ends
-            if it["speed_rank"] > rank[id(prev)]:
-                rank[id(prev)] = it["speed_rank"]
-                fill_metrics(prev, g, it["speed"] or default_speed)
-            continue
-        by_graph[(it["line"], g["id"])] = row
-        rank[id(row)] = it["speed_rank"]
-        fill_metrics(row, g, it["speed"] or default_speed)
-        out_rows.append(row)
-
-    for g in graphs:
-        if g["id"] not in used:
+        def fill_metrics(row, g, speed):
+            vin = g["in"][metric] if g["in"] else None
+            vout = g["out"][metric] if g["out"] else None
+            row.update(graph_id=g["id"], graph_title=g["title"], in_bps=vin, out_bps=vout,
+                       speed_gbps=speed / 1e9 if speed else None,
+                       in_pct=None, out_pct=None, max_pct=None)
+            if vin is None and vout is None:
+                row["status"] = "NO_DATA"
+            elif not speed:
+                row["status"] = "NO_SPEED"
+            else:
+                pin = round(100 * (vin or 0) / speed, 1)
+                pout = round(100 * (vout or 0) / speed, 1)
+                mx = max(pin, pout)
+                row.update(in_pct=pin, out_pct=pout, max_pct=mx,
+                           status="OVER" if mx > a.threshold else "OK")
+        exact_ids = {g["id"] for g in exact.values() if g}
+        for it in items:
             row = dict.fromkeys(COLUMNS, None)
-            row.update(graph_id=g["id"], graph_title=g["title"], status="NOT_IN_LIST")
+            row.update(line=it["line"], side=it["side"], link=it["link"],
+                       router=it["router"], interface=it["iface"])
+            g = exact[id(it)]
+            partner = next((x for x in items if x["line"] == it["line"] and x is not it), None)
+            pg = exact.get(id(partner)) if partner else None
+            if g:
+                row["match"] = "exact"
+            elif pg and norm(it["router"]) in pg["ntitle"]:
+                # the other end matched exactly and its graph names this router too
+                # (titles are often truncated, so this end's interface may be cut off)
+                g = pg
+                row["match"] = "other_end"
+            else:
+                # fallback: a graph whose title names both routers of the link,
+                # preferring graphs no other link matched exactly
+                pair = match_router_pair(it, graphs)
+                free = [x for x in pair if x["id"] not in exact_ids]
+                pair = free or pair
+                if pair:
+                    g = pair[0]
+                    row["match"] = "router_pair" if len(pair) == 1 else f"router_pair ({len(pair)} graphs)"
+                    if len(pair) > 1:
+                        row["candidates"] = " | ".join(x["title"] for x in pair[:5])
+            if not g:
+                row["status"] = "NO_GRAPH"
+                # help troubleshooting: graphs that mention the router at all
+                nr = norm(it["router"])
+                cand = [x["title"] for x in graphs if nr in x["ntitle"]][:5]
+                row["candidates"] = " | ".join(cand) or None
+                out_rows.append(row)
+                continue
+            used.add(g["id"])
+            # the graph title often names both ends of the link: report it once
+            prev = by_graph.get((it["line"], g["id"]))
+            if prev:
+                prev["side"] += "+" + it["side"]
+                prev["router"] += " / " + it["router"]
+                prev["interface"] += " / " + it["iface"]
+                if prev["match"] != row["match"]:
+                    prev["match"] += " / " + row["match"]
+                # keep the speed from the more specific source of the two ends
+                if it["speed_rank"] > rank[id(prev)]:
+                    rank[id(prev)] = it["speed_rank"]
+                    fill_metrics(prev, g, it["speed"] or default_speed)
+                continue
+            by_graph[(it["line"], g["id"])] = row
+            rank[id(row)] = it["speed_rank"]
+            fill_metrics(row, g, it["speed"] or default_speed)
             out_rows.append(row)
 
-    # a link is OVER if either end is over the threshold
-    worst = {}
-    for r in out_rows:
-        if r["line"] is not None and r["max_pct"] is not None:
-            worst[r["line"]] = max(worst.get(r["line"], 0), r["max_pct"])
-    for r in out_rows:
-        w = worst.get(r["line"]) if r["line"] is not None else None
-        r["link_max_pct"] = w
-        r["link_status"] = ("OVER" if w > a.threshold else "OK") if w is not None else None
+        for g in graphs:
+            if g["id"] not in used:
+                row = dict.fromkeys(COLUMNS, None)
+                row.update(graph_id=g["id"], graph_title=g["title"], status="NOT_IN_LIST")
+                out_rows.append(row)
 
-    if cacti_url:
+        # a link is OVER if either end is over the threshold
+        worst = {}
         for r in out_rows:
-            if r["graph_id"] is not None:
-                r["graph_url"] = f"{cacti_url}graph.php?action=view&local_graph_id={r['graph_id']}&rra_id=all"
+            if r["line"] is not None and r["max_pct"] is not None:
+                worst[r["line"]] = max(worst.get(r["line"], 0), r["max_pct"])
+        for r in out_rows:
+            w = worst.get(r["line"]) if r["line"] is not None else None
+            r["link_max_pct"] = w
+            r["link_status"] = ("OVER" if w > a.threshold else "OK") if w is not None else None
 
-    order = {"OVER": 0, "NO_SPEED": 1, "NO_DATA": 2, "NO_GRAPH": 3, "OK": 4, "NOT_IN_LIST": 5}
-    out_rows.sort(key=lambda r: (order.get(r["status"], 9), -(r["max_pct"] or 0)))
+        if cacti_url:
+            for r in out_rows:
+                if r["graph_id"] is not None:
+                    r["graph_url"] = f"{cacti_url}graph.php?action=view&local_graph_id={r['graph_id']}&rra_id=all"
+
+        order = {"OVER": 0, "NO_SPEED": 1, "NO_DATA": 2, "NO_GRAPH": 3, "OK": 4, "NOT_IN_LIST": 5}
+        out_rows.sort(key=lambda r: (order.get(r["status"], 9), -(r["max_pct"] or 0)))
+        return out_rows, order
+
+    metrics = [a.metric] if not a.out.lower().endswith(".xlsx") else METRICS
+    results = {m: build(m) for m in metrics}
 
     if a.out.lower().endswith(".xlsx"):
-        write_xlsx(a.out, out_rows, a)
+        write_xlsx(a.out, {m: r[0] for m, r in results.items()}, a)
     else:
-        write_csv(a.out, out_rows)
+        write_csv(a.out, results[a.metric][0])
 
-    cnt = {}
-    for r in out_rows:
-        cnt[r["status"]] = cnt.get(r["status"], 0) + 1
+    print(f"\nThreshold: {a.threshold:g}%, default speed: {a.default_speed}")
+    for m, (out_rows, order) in results.items():
+        cnt = {}
+        for r in out_rows:
+            cnt[r["status"]] = cnt.get(r["status"], 0) + 1
+        print(f"{m}: " + ", ".join(f"{k} {cnt[k]}" for k in sorted(cnt, key=lambda k: order.get(k, 9))))
+    out_rows = results[metrics[0]][0]
     fallback = sum(1 for r in out_rows if r["match"] and r["match"].startswith("router_pair"))
-    print(f"\nMetric: {a.metric}, threshold: {a.threshold:g}%, default speed: {a.default_speed}")
-    for k in sorted(cnt, key=lambda k: order.get(k, 9)):
-        print(f"  {k:12s} {cnt[k]}")
     if fallback:
-        print(f"  ({fallback} rows matched by router pair only, check the 'match' column)")
+        print(f"({fallback} rows matched by router pair only, check the 'match' column)")
     print(f"Result written to {a.out}")
+
+
+METRICS = ["avg", "peak", "p95", "p85"]
 
 
 COLUMNS = ["line", "side", "link", "router", "interface", "match", "graph_id", "graph_title",
@@ -396,7 +408,8 @@ def write_csv(path, rows):
             w.writerow([cell(r[c]) for c in COLUMNS])
 
 
-def write_xlsx(path, rows, a):
+def write_xlsx(path, sheets, a):
+    """sheets: {metric: rows}; one worksheet per metric plus a settings sheet."""
     try:
         from openpyxl import Workbook
         from openpyxl.formatting.rule import FormulaRule
@@ -406,77 +419,78 @@ def write_xlsx(path, rows, a):
         sys.exit("openpyxl is required for .xlsx output: pip install openpyxl")
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = "utilization"
-
-    # settings sheet first, so the formulas can reference the threshold
-    info = wb.create_sheet("settings")
+    info = wb.active
+    info.title = "settings"
     info.append(["threshold_pct", a.threshold])
-    for k, v in (("metric", a.metric), ("default_speed", a.default_speed),
+    for k, v in (("metrics", ", ".join(sheets)), ("default_speed", a.default_speed),
                  ("days", a.days or "all downloaded"), ("data_dir", a.data_dir), ("list", a.list), ("speeds", a.speeds or "")):
         info.append([k, v])
     info.append([])
     info.append(["Edit speed_gbps or threshold_pct and the percentages and statuses recalculate."])
+    info.append(["avg = average, peak = highest sample, p95 / p85 = 95th / 85th percentile of the samples."])
     info.column_dimensions["A"].width = 16
     info.column_dimensions["B"].width = 40
     thr = "settings!$B$1"
 
     L = {name: get_column_letter(i) for i, name in enumerate(COLUMNS, 1)}
-    ws.append(COLUMNS)
-    for c in ws[1]:
-        c.font = Font(bold=True)
+    for index, (metric, rows) in enumerate(sheets.items()):
+        ws = wb.create_sheet(metric, index)
+        ws.append(COLUMNS)
+        for c in ws[1]:
+            c.font = Font(bold=True)
 
-    for r in rows:
-        values = [r[c] for c in COLUMNS]
-        ws.append(values)
-        n = ws.max_row
-        # rows with a graph and data get live formulas; the others stay as they are
-        if r["status"] in ("OK", "OVER", "NO_SPEED"):
-            sp, i_, o_ = f"{L['speed_gbps']}{n}", f"{L['in_bps']}{n}", f"{L['out_bps']}{n}"
-            ip, op, mp = f"{L['in_pct']}{n}", f"{L['out_pct']}{n}", f"{L['max_pct']}{n}"
+        for r in rows:
+            values = [r[c] for c in COLUMNS]
+            ws.append(values)
+            n = ws.max_row
+            # rows with a graph and data get live formulas; the others stay as they are
+            if r["status"] in ("OK", "OVER", "NO_SPEED"):
+                sp, i_, o_ = f"{L['speed_gbps']}{n}", f"{L['in_bps']}{n}", f"{L['out_bps']}{n}"
+                ip, op, mp = f"{L['in_pct']}{n}", f"{L['out_pct']}{n}", f"{L['max_pct']}{n}"
 
-            def pct(v):
-                return f'=IF(AND(ISNUMBER({sp}),{sp}>0,ISNUMBER({v})),ROUND({v}/({sp}*1000000000)*100,1),"")'
-            ws[ip] = pct(i_)
-            ws[op] = pct(o_)
-            ws[mp] = f'=IF(COUNT({ip},{op})=0,"",MAX({ip},{op}))'
-            ws[f"{L['status']}{n}"] = f'=IF(ISNUMBER({mp}),IF({mp}>{thr},"OVER","OK"),"NO_SPEED")'
-        if r["line"] is not None:
-            line_col, max_col = f"${L['line']}$2:${L['line']}${len(rows) + 1}", f"${L['max_pct']}$2:${L['max_pct']}${len(rows) + 1}"
-            lm = f"{L['link_max_pct']}{n}"
-            ln = f"{L['line']}{n}"
-            ws[lm] = f'=IF(COUNTIFS({line_col},{ln},{max_col},">=0")=0,"",_xlfn.MAXIFS({max_col},{line_col},{ln}))'
-            ws[f"{L['link_status']}{n}"] = f'=IF(ISNUMBER({lm}),IF({lm}>{thr},"OVER","OK"),"")'
+                def pct(v):
+                    return f'=IF(AND(ISNUMBER({sp}),{sp}>0,ISNUMBER({v})),ROUND({v}/({sp}*1000000000)*100,1),"")'
+                ws[ip] = pct(i_)
+                ws[op] = pct(o_)
+                ws[mp] = f'=IF(COUNT({ip},{op})=0,"",MAX({ip},{op}))'
+                ws[f"{L['status']}{n}"] = f'=IF(ISNUMBER({mp}),IF({mp}>{thr},"OVER","OK"),"NO_SPEED")'
+            if r["line"] is not None:
+                line_col, max_col = f"${L['line']}$2:${L['line']}${len(rows) + 1}", f"${L['max_pct']}$2:${L['max_pct']}${len(rows) + 1}"
+                lm = f"{L['link_max_pct']}{n}"
+                ln = f"{L['line']}{n}"
+                ws[lm] = f'=IF(COUNTIFS({line_col},{ln},{max_col},">=0")=0,"",_xlfn.MAXIFS({max_col},{line_col},{ln}))'
+                ws[f"{L['link_status']}{n}"] = f'=IF(ISNUMBER({lm}),IF({lm}>{thr},"OVER","OK"),"")'
 
-    last = ws.max_row
-    full = f"A2:{get_column_letter(len(COLUMNS))}{last}"
-    st = f"${L['status']}2"
-    ws.conditional_formatting.add(full, FormulaRule(formula=[f'{st}="OVER"'],
-                                  fill=PatternFill("solid", fgColor="F8CBAD"), stopIfTrue=True))
-    ws.conditional_formatting.add(full, FormulaRule(formula=[f'OR({st}="NO_GRAPH",{st}="NO_DATA",{st}="NO_SPEED")'],
-                                  fill=PatternFill("solid", fgColor="FFE699")))
-    # clickable graph title and url
-    for n, r in enumerate(rows, 2):
-        if r["graph_url"]:
-            for col in ("graph_title", "graph_url"):
-                cell = ws[f"{L[col]}{n}"]
-                cell.hyperlink = r["graph_url"]
-                cell.style = "Hyperlink"
-    fallback_fill = PatternFill("solid", fgColor="DDEBF7")
-    for n, r in enumerate(rows, 2):
-        if r["match"] and r["match"].startswith("router_pair"):
-            ws[f"{L['match']}{n}"].fill = fallback_fill
+        last = ws.max_row
+        full = f"A2:{get_column_letter(len(COLUMNS))}{last}"
+        st = f"${L['status']}2"
+        ws.conditional_formatting.add(full, FormulaRule(formula=[f'{st}="OVER"'],
+                                      fill=PatternFill("solid", fgColor="F8CBAD"), stopIfTrue=True))
+        ws.conditional_formatting.add(full, FormulaRule(formula=[f'OR({st}="NO_GRAPH",{st}="NO_DATA",{st}="NO_SPEED")'],
+                                      fill=PatternFill("solid", fgColor="FFE699")))
+        # clickable graph title and url
+        for n, r in enumerate(rows, 2):
+            if r["graph_url"]:
+                for col in ("graph_title", "graph_url"):
+                    cell = ws[f"{L[col]}{n}"]
+                    cell.hyperlink = r["graph_url"]
+                    cell.style = "Hyperlink"
+        fallback_fill = PatternFill("solid", fgColor="DDEBF7")
+        for n, r in enumerate(rows, 2):
+            if r["match"] and r["match"].startswith("router_pair"):
+                ws[f"{L['match']}{n}"].fill = fallback_fill
 
-    for name, fmt_ in (("speed_gbps", "0.##"), ("in_bps", "#,##0"), ("out_bps", "#,##0"),
-                       ("in_pct", "0.0"), ("out_pct", "0.0"), ("max_pct", "0.0"), ("link_max_pct", "0.0")):
-        for row in ws.iter_rows(min_row=2, min_col=COLUMNS.index(name) + 1, max_col=COLUMNS.index(name) + 1):
-            row[0].number_format = fmt_
+        for name, fmt_ in (("speed_gbps", "0.##"), ("in_bps", "#,##0"), ("out_bps", "#,##0"),
+                           ("in_pct", "0.0"), ("out_pct", "0.0"), ("max_pct", "0.0"), ("link_max_pct", "0.0")):
+            for row in ws.iter_rows(min_row=2, min_col=COLUMNS.index(name) + 1, max_col=COLUMNS.index(name) + 1):
+                row[0].number_format = fmt_
 
-    widths = {"link": 40, "graph_title": 60, "graph_url": 30, "candidates": 80, "router": 22, "interface": 22, "match": 22}
-    for i, name in enumerate(COLUMNS, 1):
-        ws.column_dimensions[get_column_letter(i)].width = widths.get(name, 14)
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
+        widths = {"link": 40, "graph_title": 60, "graph_url": 30, "candidates": 80, "router": 22, "interface": 22, "match": 22}
+        for i, name in enumerate(COLUMNS, 1):
+            ws.column_dimensions[get_column_letter(i)].width = widths.get(name, 14)
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+    wb.active = 0
     wb.save(path)
 
 
