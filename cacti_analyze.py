@@ -189,6 +189,7 @@ def main():
     items = load_list(a.list)
     default_speed = parse_speed(a.default_speed)
     used = set()
+    by_graph = {}
     out_rows = []
     for it in items:
         g = match(it, graphs)
@@ -205,6 +206,14 @@ def main():
             out_rows.append(row)
             continue
         used.add(g["id"])
+        # the graph title often names both ends of the link: report it once
+        prev = by_graph.get((it["line"], g["id"]))
+        if prev:
+            prev["side"] += "+" + it["side"]
+            prev["router"] += " / " + it["router"]
+            prev["interface"] += " / " + it["iface"]
+            continue
+        by_graph[(it["line"], g["id"])] = row
         speed = it["speed"] or parse_speed_from_title(g["title"]) or default_speed
         vin = g["in"][a.metric] if g["in"] else None
         vout = g["out"][a.metric] if g["out"] else None

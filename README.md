@@ -91,6 +91,8 @@ A semicolon-separated CSV sorted by severity. Each row is one link end:
 | `NOT_IN_LIST` | Graph on the branch that is not in the CSV |
 
 `link_status` is `OVER` when either end of the link is over the threshold.
+When both ends match the same graph (the title names the whole link), the
+link is reported in one row with side `A+B`.
 
 Graph titles are matched by router name and interface name; common long
 interface names are normalised (`GigabitEthernet0/1` matches `Gi0/1`).
