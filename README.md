@@ -100,7 +100,8 @@ mention the router.
 An Excel workbook (`.xlsx`, default) or a semicolon-separated CSV, sorted by
 severity. In the workbook OVER rows are red, rows needing attention are
 yellow and router-pair matches are blue in the `match` column; a `settings`
-sheet records the parameters used. Each row is one link end:
+sheet records the parameters used. Each row is one link end, or a whole link
+when both ends match the same graph:
 
 | Status | Meaning |
 | --- | --- |
