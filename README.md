@@ -73,3 +73,34 @@ A semicolon-separated CSV sorted by severity. Each row is one link end:
 
 Graph titles are matched by router name and interface name; common long
 interface names are normalised (`GigabitEthernet0/1` matches `Gi0/1`).
+
+## Creating missing Eth-Trunk graphs
+
+`cacti_lag_graphs.py` goes through the devices in the Cacti console and finds
+LAG interfaces (`ifType` = `ieee8023adLag`, name matching `^Eth-Trunk`) that
+have no `In/Out Bits (64-bit Counters)` graph yet. The Cacti user needs console
+access to Devices and graph creation.
+
+```
+# report only
+python cacti_lag_graphs.py --url https://cacti.example.com/cacti --user admin --insecure
+
+# reload the "SNMP - Interface Statistics" data query, then create the graphs
+python cacti_lag_graphs.py --url https://cacti.example.com/cacti --user admin --insecure \
+  --reindex --create
+```
+
+Nothing is changed unless `--reindex` and/or `--create` is given. Start with
+one device (`--host-filter <regex>` or `--host-ids 12,34`). After creating, the
+script reloads the New Graphs page to confirm each graph exists and writes a
+report (`--out`, default `lag_graphs.csv`) with status `exists`, `missing`,
+`created` or `create_failed`.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--data-query` | `SNMP - Interface Statistics` | Data query to use |
+| `--graph-type` | `In/Out Bits (64-bit Counters)` | Graph type to create |
+| `--name-regex` | `(?i)^eth-trunk` | Interface name filter (ifName or ifDescr) |
+| `--host-filter` | none | Regex on the device description |
+| `--host-ids` | none | Comma separated device ids |
+| `--debug-dir` | none | Save fetched pages for troubleshooting |
