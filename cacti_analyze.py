@@ -109,6 +109,22 @@ def norm(s):
     return re.sub(r"[^a-z0-9/.:]", "", s)
 
 
+# Default speed by interface name prefix in the link list (case-insensitive).
+# Used when the CSV line has no explicit speed column.
+SPEED_BY_NAME = [
+    ("eth-trunk", 20e9),
+    ("xe", 10e9),
+]
+
+
+def speed_from_name(iface):
+    n = iface.strip().lower()
+    for prefix, speed in SPEED_BY_NAME:
+        if n.startswith(prefix):
+            return speed
+    return None
+
+
 def load_list(path):
     """Input CSV: one link per line -> router1,interface1,router2,interface2[,speed]
     Header line is optional. Both ends of every link are checked."""
@@ -131,7 +147,8 @@ def load_list(path):
             for side, (ri, ii) in (("A", (0, 1)), ("B", (2, 3))):
                 if len(r) > ii and r[ri] and r[ii]:
                     out.append({"line": n, "side": side, "link": link,
-                                "router": r[ri], "iface": r[ii], "speed": speed})
+                                "router": r[ri], "iface": r[ii],
+                                "speed": speed or speed_from_name(r[ii])})
         return out
 
 

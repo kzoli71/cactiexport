@@ -62,8 +62,16 @@ router1,interface1,router2,interface2[,speed]
 The optional fifth column is the link speed (`100M`, `1G`, `10G` or bits/s).
 A header line is optional. See `links.example.csv`.
 
-Speed is resolved in this order: CSV column, a speed in the graph title
-(for example `(1G)` or `1000 Mbps`), then `--default-speed` (10G).
+Speed is resolved in this order:
+
+1. the CSV speed column,
+2. the interface name in the CSV: `xe...` is 10G, `Eth-Trunk...` is 20G
+   (see `SPEED_BY_NAME` in `cacti_analyze.py`),
+3. a speed in the graph title (for example `(1G)` or `1000 Mbps`),
+4. `--default-speed` (10G).
+
+Port type names such as `25GE` are not used, since the optic may run at a
+lower speed.
 
 ```
 python cacti_analyze.py --data-dir data/2026-11 --list links.csv --out result.csv
