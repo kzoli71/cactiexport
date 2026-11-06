@@ -182,17 +182,34 @@ def load_list(path):
         return out
 
 
+def router_iface_adjacent(nr, ni, nt, max_gap=1):
+    """True if the title names the interface right after the router, allowing
+    at most max_gap words in between ("rtr1 - Traffic - Gi0/1"). This keeps
+    "R1-xe0/4/0_To_R2-xe0/3/0" from matching R2 xe0/4/0."""
+    words, rw, iw = nt.split(), nr.split(), ni.split()
+    if not rw or not iw:
+        return False
+    for i in range(len(words) - len(rw) + 1):
+        head = words[i:i + len(rw)]
+        # allow a domain suffix on the router name (rtr1.example.net)
+        if head[:-1] != rw[:-1] or not (head[-1] == rw[-1] or head[-1].startswith(rw[-1] + ".")):
+            continue
+        start = i + len(rw)
+        for j in range(start, min(start + max_gap, len(words)) + 1):
+            if words[j:j + len(iw)] == iw:
+                return True
+    return False
+
+
 def match(item, graphs):
-    """Return the graph whose title contains both router and interface names."""
+    """Return the graph whose title names the router followed by the interface."""
     nr, ni = norm(item["router"]), norm(item["iface"])
     best = None
     for g in graphs:
         nt = g["ntitle"]
-        if nr in nt:
-            # interface must match as a token, not as a prefix (gi0/1 vs gi0/10)
-            if re.search(r"(?<![a-z0-9/.:])" + re.escape(ni) + r"(?![a-z0-9/.:])", nt):
-                if best is None or len(nt) < len(best["ntitle"]):
-                    best = g
+        if router_iface_adjacent(nr, ni, nt):
+            if best is None or len(nt) < len(best["ntitle"]):
+                best = g
     return best
 
 

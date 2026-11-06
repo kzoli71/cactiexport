@@ -100,8 +100,10 @@ python cacti_analyze.py --data-dir data/2026-11 --list links.csv --speeds speeds
 
 ## Matching
 
-Each end of a link is first matched exactly: the graph title must contain
-the router name and the interface name. If an end has no exact match but the
+Each end of a link is first matched exactly: the graph title must name the
+router followed by the interface (at most one word in between, e.g.
+`R1 - Traffic - Gi0/1` or `R1-xe0/4/0_To_R2-xe0/3/0`). An interface that
+belongs to another router in the title does not count. If an end has no exact match but the
 other end of the same link matched a graph whose title also names this
 router, that graph is used (`other_end`; graph titles are often truncated, so
 the far-end interface may be cut off). Otherwise a graph whose title contains
