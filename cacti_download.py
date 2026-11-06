@@ -157,7 +157,7 @@ class Cacti:
 
 
 def xport_title(txt):
-    for row in csv.reader(io.StringIO(txt)):
+    for row in csv.reader(io.StringIO(txt.lstrip("\ufeff"))):
         if row and row[0].strip().lower().rstrip(":") == "title" and len(row) > 1:
             return row[1].strip()
         if row and row[0].strip().lower() == "date":
@@ -218,7 +218,7 @@ def main():
             continue
         try:
             txt = c.xport(gid, start, end)
-            if not any(r and r[0].strip().lower() == "date" for r in csv.reader(io.StringIO(txt))):
+            if not any(r and r[0].strip().lower() == "date" for r in csv.reader(io.StringIO(txt.lstrip("\ufeff")))):
                 raise ValueError("no 'Date' header in export (permission problem or wrong graph id?)")
         except Exception as e:  # keep going on single failures
             errors += 1

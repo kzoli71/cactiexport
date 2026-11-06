@@ -24,7 +24,7 @@ UNIT = {"k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12}
 
 def parse_xport(txt):
     """Return (title, columns, rows); each row is [timestamp, value1, value2, ...]."""
-    rdr = list(csv.reader(io.StringIO(txt)))
+    rdr = list(csv.reader(io.StringIO(txt.lstrip("\ufeff"))))
     title = ""
     hdr_idx = None
     for i, row in enumerate(rdr):
@@ -170,7 +170,7 @@ def main():
     graphs = []
     for fn in files:
         gid = int(re.search(r"\d+", fn).group())
-        with open(os.path.join(a.data_dir, fn), encoding="utf-8") as f:
+        with open(os.path.join(a.data_dir, fn), encoding="utf-8-sig") as f:
             try:
                 title, cols, rows = parse_xport(f.read())
             except ValueError as e:
@@ -266,7 +266,8 @@ def parse_speed_from_title(title):
 def column(rows, i, mult):
     if i is None:
         return []
-    return [r[i + 1] * mult for r in rows if i + 1 < len(r) and r[i + 1] is not None]
+    # abs(): traffic graphs often plot inbound below the axis (negative CDEF)
+    return [abs(r[i + 1]) * mult for r in rows if i + 1 < len(r) and r[i + 1] is not None]
 
 
 def fmt(v):
