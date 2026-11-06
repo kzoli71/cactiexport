@@ -170,7 +170,7 @@ def match(item, graphs):
         nt = g["ntitle"]
         if nr in nt:
             # interface must match as a token, not as a prefix (gi0/1 vs gi0/10)
-            if re.search(re.escape(ni) + r"(?![0-9/.:])", nt):
+            if re.search(r"(?<![a-z0-9/.:])" + re.escape(ni) + r"(?![a-z0-9/.:])", nt):
                 if best is None or len(nt) < len(best["ntitle"]):
                     best = g
     return best
