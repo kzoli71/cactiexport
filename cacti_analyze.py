@@ -110,22 +110,6 @@ def norm(s):
     return re.sub(r"[^a-z0-9/.:]+", " ", s).strip()
 
 
-# Default speed by interface name prefix in the link list (case-insensitive).
-# Used when the CSV line has no explicit speed column.
-SPEED_BY_NAME = [
-    ("eth-trunk", 20e9),
-    ("xe", 10e9),
-]
-
-
-def speed_from_name(iface):
-    n = iface.strip().lower()
-    for prefix, speed in SPEED_BY_NAME:
-        if n.startswith(prefix):
-            return speed
-    return None
-
-
 def load_speeds(path):
     """Speed file: router,interface,speed (e.g. 10G). Header line optional.
     Returns {(norm(router), norm(interface)): bits/s}."""
@@ -174,7 +158,7 @@ def load_list(path):
                     out.append({"line": n, "side": side, "link": link,
                                 "router": r[ri], "iface": r[ii],
                                 "peer": r[2 if ri == 0 else 0] if len(r) > 2 else None,
-                                "speed": speed, "name_speed": speed_from_name(r[ii])})
+                                "speed": speed})
         return out
 
 
@@ -234,11 +218,11 @@ def main():
     speeds = load_speeds(a.speeds) if a.speeds else {}
     if a.speeds:
         print(f"{len(speeds)} speeds loaded from {a.speeds}.")
-    # speed priority: CSV speed column, speed file, interface name rule
+    # speed priority: CSV speed column, speed file, then --default-speed
     for it in items:
         file_speed = speeds.get((norm(it["router"]), norm(it["iface"])))
-        it["speed_rank"] = 3 if it["speed"] else 2 if file_speed else 1 if it["name_speed"] else 0
-        it["speed"] = it["speed"] or file_speed or it["name_speed"]
+        it["speed_rank"] = 2 if it["speed"] else 1 if file_speed else 0
+        it["speed"] = it["speed"] or file_speed
     default_speed = parse_speed(a.default_speed)
     used = set()
     by_graph = {}
@@ -312,7 +296,7 @@ def main():
             continue
         by_graph[(it["line"], g["id"])] = row
         rank[id(row)] = it["speed_rank"]
-        fill_metrics(row, g, it["speed"] or parse_speed_from_title(g["title"]) or default_speed)
+        fill_metrics(row, g, it["speed"] or default_speed)
         out_rows.append(row)
 
     for g in graphs:
@@ -454,15 +438,6 @@ def match_router_pair(item, graphs):
     nr, np_ = norm(item["router"]), norm(item["peer"])
     hits = [g for g in graphs if nr in g["ntitle"] and np_ in g["ntitle"]]
     return sorted(hits, key=lambda g: len(g["ntitle"]))
-
-
-def parse_speed_from_title(title):
-    # e.g. "router1 - Traffic - Gi0/1 (1G)" or "... 1000 Mbps"
-    m = re.search(r"[\(\[]\s*(\d+(?:[.,]\d+)?\s*[kKmMgGtT](?:bit|bps|b/s|b)?)\s*[\)\]]", title) \
-        or re.search(r"(\d+(?:[.,]\d+)?\s*[kKmMgGtT](?:bit|bps|b/s))", title)
-    # Port names such as 25GE0/7/0 are deliberately not used: the optic may
-    # run at a lower speed than the port type.
-    return parse_speed(m.group(1)) if m else None
 
 
 def column(rows, i, mult):

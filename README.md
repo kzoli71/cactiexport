@@ -74,10 +74,10 @@ Speed is resolved in this order:
 2. the speed file given with `--speeds` (lines of `router,interface,speed`,
    e.g. `01010C21,xe0/7/0,25G`; header optional, not every interface needs
    to be listed),
-3. the interface name in the CSV: `xe...` is 10G, `Eth-Trunk...` is 20G
-   (see `SPEED_BY_NAME` in `cacti_analyze.py`),
-4. a speed in the graph title (for example `(1G)` or `1000 Mbps`),
-5. `--default-speed` (10G).
+3. `--default-speed` (10G).
+
+Speeds are never guessed from interface or port names (`25GE` may carry a
+10G optic).
 
 When both ends of a link share one graph, the speed from the more specific
 source of the two ends is used.
