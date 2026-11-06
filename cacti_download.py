@@ -116,14 +116,15 @@ def main():
     ap.add_argument("--out-dir", default="data", help="directory for the downloaded CSV files")
     ap.add_argument("--skip-existing", action="store_true", help="do not download graphs already in --out-dir")
     ap.add_argument("--insecure", action="store_true", help="skip TLS verification (self-signed cert)")
+    ap.add_argument("--ca-cert", help="PEM file of the server's self-signed certificate / CA to verify against")
     a = ap.parse_args()
 
     if not a.tree_url and not a.graph_ids:
         ap.error("give --tree-url or --graph-ids")
     if a.insecure:
-        requests.packages.urllib3.disable_warnings()
-
-    c = Cacti(a.url, verify=not a.insecure)
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    c = Cacti(a.url, verify=False if a.insecure else (a.ca_cert or True))
     c.login(a.user, a.password or getpass.getpass("Cacti password: "), a.realm)
     print("Logged in.")
 

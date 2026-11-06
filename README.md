@@ -43,6 +43,7 @@ interrupted download.
 | `--skip-existing` | off | Skip graphs already downloaded |
 | `--realm` | none | Login realm, e.g. for LDAP |
 | `--insecure` | off | Skip TLS verification (self-signed certificate) |
+| `--ca-cert` | none | Verify against this PEM certificate instead (e.g. the exported self-signed cert) |
 
 The password is prompted for when `--password` is omitted.
 
