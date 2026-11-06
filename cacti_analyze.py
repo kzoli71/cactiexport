@@ -260,7 +260,7 @@ def main():
         vin = g["in"][a.metric] if g["in"] else None
         vout = g["out"][a.metric] if g["out"] else None
         row.update(graph_id=g["id"], graph_title=g["title"],
-                   in_bps=vin, out_bps=vout, speed_bps=speed)
+                   in_bps=vin, out_bps=vout, speed_gbps=speed / 1e9 if speed else None)
         if vin is None and vout is None:
             row["status"] = "NO_DATA"
         elif not speed:
@@ -310,7 +310,7 @@ def main():
 
 
 COLUMNS = ["line", "side", "link", "router", "interface", "match", "graph_id", "graph_title",
-           "speed_bps", "in_bps", "out_bps", "in_pct", "out_pct", "max_pct", "status",
+           "speed_gbps", "in_bps", "out_bps", "in_pct", "out_pct", "max_pct", "status",
            "link_max_pct", "link_status", "candidates"]
 
 
@@ -331,6 +331,7 @@ def write_csv(path, rows):
 def write_xlsx(path, rows, a):
     try:
         from openpyxl import Workbook
+        from openpyxl.formatting.rule import FormulaRule
         from openpyxl.styles import Font, PatternFill
         from openpyxl.utils import get_column_letter
     except ImportError:
@@ -339,31 +340,61 @@ def write_xlsx(path, rows, a):
     wb = Workbook()
     ws = wb.active
     ws.title = "utilization"
+
+    # settings sheet first, so the formulas can reference the threshold
+    info = wb.create_sheet("settings")
+    info.append(["threshold_pct", a.threshold])
+    for k, v in (("metric", a.metric), ("default_speed", a.default_speed),
+                 ("days", a.days or "all downloaded"), ("data_dir", a.data_dir), ("list", a.list)):
+        info.append([k, v])
+    info.append([])
+    info.append(["Edit speed_gbps or threshold_pct and the percentages and statuses recalculate."])
+    info.column_dimensions["A"].width = 16
+    info.column_dimensions["B"].width = 40
+    thr = "settings!$B$1"
+
+    L = {name: get_column_letter(i) for i, name in enumerate(COLUMNS, 1)}
     ws.append(COLUMNS)
     for c in ws[1]:
         c.font = Font(bold=True)
-    fills = {
-        "OVER": PatternFill("solid", fgColor="F8CBAD"),
-        "NO_GRAPH": PatternFill("solid", fgColor="FFE699"),
-        "NO_DATA": PatternFill("solid", fgColor="FFE699"),
-        "NO_SPEED": PatternFill("solid", fgColor="FFE699"),
-    }
-    fallback_fill = PatternFill("solid", fgColor="DDEBF7")
-    i_match = COLUMNS.index("match") + 1
-    for r in rows:
-        ws.append([r[c] for c in COLUMNS])
-        fill = fills.get(r["status"])
-        if fill:
-            for c in ws[ws.max_row]:
-                c.fill = fill
-        if r["match"] and r["match"].startswith("router_pair"):
-            ws.cell(row=ws.max_row, column=i_match).fill = fallback_fill
 
-    # number formats: bits/s with thousands separator, percent with one decimal
-    for name, fmt_ in (("speed_bps", "#,##0"), ("in_bps", "#,##0"), ("out_bps", "#,##0"),
+    for r in rows:
+        values = [r[c] for c in COLUMNS]
+        ws.append(values)
+        n = ws.max_row
+        # rows with a graph and data get live formulas; the others stay as they are
+        if r["status"] in ("OK", "OVER", "NO_SPEED"):
+            sp, i_, o_ = f"{L['speed_gbps']}{n}", f"{L['in_bps']}{n}", f"{L['out_bps']}{n}"
+            ip, op, mp = f"{L['in_pct']}{n}", f"{L['out_pct']}{n}", f"{L['max_pct']}{n}"
+
+            def pct(v):
+                return f'=IF(AND(ISNUMBER({sp}),{sp}>0,ISNUMBER({v})),ROUND({v}/({sp}*1000000000)*100,1),"")'
+            ws[ip] = pct(i_)
+            ws[op] = pct(o_)
+            ws[mp] = f'=IF(COUNT({ip},{op})=0,"",MAX({ip},{op}))'
+            ws[f"{L['status']}{n}"] = f'=IF(ISNUMBER({mp}),IF({mp}>{thr},"OVER","OK"),"NO_SPEED")'
+        if r["line"] is not None:
+            line_col, max_col = f"${L['line']}$2:${L['line']}${len(rows) + 1}", f"${L['max_pct']}$2:${L['max_pct']}${len(rows) + 1}"
+            lm = f"{L['link_max_pct']}{n}"
+            ln = f"{L['line']}{n}"
+            ws[lm] = f'=IF(COUNTIFS({line_col},{ln},{max_col},">=0")=0,"",_xlfn.MAXIFS({max_col},{line_col},{ln}))'
+            ws[f"{L['link_status']}{n}"] = f'=IF(ISNUMBER({lm}),IF({lm}>{thr},"OVER","OK"),"")'
+
+    last = ws.max_row
+    full = f"A2:{get_column_letter(len(COLUMNS))}{last}"
+    st = f"${L['status']}2"
+    ws.conditional_formatting.add(full, FormulaRule(formula=[f'{st}="OVER"'],
+                                  fill=PatternFill("solid", fgColor="F8CBAD"), stopIfTrue=True))
+    ws.conditional_formatting.add(full, FormulaRule(formula=[f'OR({st}="NO_GRAPH",{st}="NO_DATA",{st}="NO_SPEED")'],
+                                  fill=PatternFill("solid", fgColor="FFE699")))
+    fallback_fill = PatternFill("solid", fgColor="DDEBF7")
+    for n, r in enumerate(rows, 2):
+        if r["match"] and r["match"].startswith("router_pair"):
+            ws[f"{L['match']}{n}"].fill = fallback_fill
+
+    for name, fmt_ in (("speed_gbps", "0.##"), ("in_bps", "#,##0"), ("out_bps", "#,##0"),
                        ("in_pct", "0.0"), ("out_pct", "0.0"), ("max_pct", "0.0"), ("link_max_pct", "0.0")):
-        col = COLUMNS.index(name) + 1
-        for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
+        for row in ws.iter_rows(min_row=2, min_col=COLUMNS.index(name) + 1, max_col=COLUMNS.index(name) + 1):
             row[0].number_format = fmt_
 
     widths = {"link": 40, "graph_title": 60, "candidates": 80, "router": 22, "interface": 22, "match": 22}
@@ -371,12 +402,6 @@ def write_xlsx(path, rows, a):
         ws.column_dimensions[get_column_letter(i)].width = widths.get(name, 14)
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
-
-    info = wb.create_sheet("settings")
-    for k, v in (("data_dir", a.data_dir), ("list", a.list), ("metric", a.metric),
-                 ("threshold_pct", a.threshold), ("default_speed", a.default_speed),
-                 ("days", a.days or "all downloaded")):
-        info.append([k, v])
     wb.save(path)
 
 

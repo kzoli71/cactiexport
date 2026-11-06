@@ -109,7 +109,13 @@ mention the router.
 An Excel workbook (`.xlsx`, default) or a semicolon-separated CSV, sorted by
 severity. In the workbook OVER rows are red, rows needing attention are
 yellow and router-pair matches are blue in the `match` column; a `settings`
-sheet records the parameters used. Each row is one link end, or a whole link
+sheet records the parameters used.
+
+In the workbook `in_pct`, `out_pct`, `max_pct`, `status`, `link_max_pct` and
+`link_status` are formulas: change `speed_gbps` (in Gbit/s) on a row, or
+`threshold_pct` on the `settings` sheet, and they recalculate. Row colours
+follow the recalculated status. `link_max_pct` uses `MAXIFS` (Excel 2019 /
+Microsoft 365 or LibreOffice). Each row is one link end, or a whole link
 when both ends match the same graph:
 
 | Status | Meaning |
