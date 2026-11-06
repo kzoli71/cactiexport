@@ -258,13 +258,9 @@ def parse_speed_from_title(title):
     # e.g. "router1 - Traffic - Gi0/1 (1G)" or "... 1000 Mbps"
     m = re.search(r"[\(\[]\s*(\d+(?:[.,]\d+)?\s*[kKmMgGtT](?:bit|bps|b/s|b)?)\s*[\)\]]", title) \
         or re.search(r"(\d+(?:[.,]\d+)?\s*[kKmMgGtT](?:bit|bps|b/s))", title)
-    if m:
-        return parse_speed(m.group(1))
-    # Huawei style port names: 25GE0/7/0, 100GE1/0/1, GE0/0/1 (1G)
-    m = re.search(r"(?<![A-Za-z0-9])(\d*)GE\d", title)
-    if m:
-        return float(m.group(1) or 1) * 1e9
-    return None
+    # Port names such as 25GE0/7/0 are deliberately not used: the optic may
+    # run at a lower speed than the port type.
+    return parse_speed(m.group(1)) if m else None
 
 
 def column(rows, i, mult):
