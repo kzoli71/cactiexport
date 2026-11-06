@@ -126,6 +126,30 @@ def speed_from_name(iface):
     return None
 
 
+def load_speeds(path):
+    """Speed file: router,interface,speed (e.g. 10G). Header line optional.
+    Returns {(norm(router), norm(interface)): bits/s}."""
+    out = {}
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        for n, r in enumerate(csv.reader(f, dialect=dialect), 1):
+            r = [x.strip() for x in r]
+            if len(r) < 3 or not r[0]:
+                continue
+            sp = parse_speed(r[2])
+            if sp is None:
+                if n > 1:
+                    print(f"  {path}:{n}: cannot parse speed '{r[2]}', ignored")
+                continue  # header or bad value
+            out[(norm(r[0]), norm(r[1]))] = sp
+    return out
+
+
 def load_list(path):
     """Input CSV: one link per line -> router1,interface1,router2,interface2[,speed]
     Header line is optional. Both ends of every link are checked."""
@@ -150,7 +174,7 @@ def load_list(path):
                     out.append({"line": n, "side": side, "link": link,
                                 "router": r[ri], "iface": r[ii],
                                 "peer": r[2 if ri == 0 else 0] if len(r) > 2 else None,
-                                "speed": speed or speed_from_name(r[ii])})
+                                "speed": speed, "name_speed": speed_from_name(r[ii])})
         return out
 
 
@@ -172,6 +196,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default="data", help="directory written by cacti_download.py")
     ap.add_argument("--list", required=True, help="CSV: router1,interface1,router2,interface2[,speed]")
+    ap.add_argument("--speeds", help="file with router,interface,speed lines (e.g. 10G) to look speeds up in")
     ap.add_argument("--default-speed", default="10G", help="speed used when none is known (default 10G)")
     ap.add_argument("--days", type=float, help="only use the last N days of the downloaded data")
     ap.add_argument("--metric", choices=["peak", "avg", "p95"], default="avg")
@@ -206,11 +231,37 @@ def main():
     print(f"{len(graphs)} graphs loaded from {a.data_dir}.")
 
     items = load_list(a.list)
+    speeds = load_speeds(a.speeds) if a.speeds else {}
+    if a.speeds:
+        print(f"{len(speeds)} speeds loaded from {a.speeds}.")
+    # speed priority: CSV speed column, speed file, interface name rule
+    for it in items:
+        file_speed = speeds.get((norm(it["router"]), norm(it["iface"])))
+        it["speed_rank"] = 3 if it["speed"] else 2 if file_speed else 1 if it["name_speed"] else 0
+        it["speed"] = it["speed"] or file_speed or it["name_speed"]
     default_speed = parse_speed(a.default_speed)
     used = set()
     by_graph = {}
     out_rows = []
     exact = {id(it): match(it, graphs) for it in items}
+    rank = {}
+
+    def fill_metrics(row, g, speed):
+        vin = g["in"][a.metric] if g["in"] else None
+        vout = g["out"][a.metric] if g["out"] else None
+        row.update(graph_id=g["id"], graph_title=g["title"], in_bps=vin, out_bps=vout,
+                   speed_gbps=speed / 1e9 if speed else None,
+                   in_pct=None, out_pct=None, max_pct=None)
+        if vin is None and vout is None:
+            row["status"] = "NO_DATA"
+        elif not speed:
+            row["status"] = "NO_SPEED"
+        else:
+            pin = round(100 * (vin or 0) / speed, 1)
+            pout = round(100 * (vout or 0) / speed, 1)
+            mx = max(pin, pout)
+            row.update(in_pct=pin, out_pct=pout, max_pct=mx,
+                       status="OVER" if mx > a.threshold else "OK")
     exact_ids = {g["id"] for g in exact.values() if g}
     for it in items:
         row = dict.fromkeys(COLUMNS, None)
@@ -254,23 +305,14 @@ def main():
             prev["interface"] += " / " + it["iface"]
             if prev["match"] != row["match"]:
                 prev["match"] += " / " + row["match"]
+            # keep the speed from the more specific source of the two ends
+            if it["speed_rank"] > rank[id(prev)]:
+                rank[id(prev)] = it["speed_rank"]
+                fill_metrics(prev, g, it["speed"] or default_speed)
             continue
         by_graph[(it["line"], g["id"])] = row
-        speed = it["speed"] or parse_speed_from_title(g["title"]) or default_speed
-        vin = g["in"][a.metric] if g["in"] else None
-        vout = g["out"][a.metric] if g["out"] else None
-        row.update(graph_id=g["id"], graph_title=g["title"],
-                   in_bps=vin, out_bps=vout, speed_gbps=speed / 1e9 if speed else None)
-        if vin is None and vout is None:
-            row["status"] = "NO_DATA"
-        elif not speed:
-            row["status"] = "NO_SPEED"
-        else:
-            pin = round(100 * (vin or 0) / speed, 1)
-            pout = round(100 * (vout or 0) / speed, 1)
-            mx = max(pin, pout)
-            row.update(in_pct=pin, out_pct=pout, max_pct=mx,
-                       status="OVER" if mx > a.threshold else "OK")
+        rank[id(row)] = it["speed_rank"]
+        fill_metrics(row, g, it["speed"] or parse_speed_from_title(g["title"]) or default_speed)
         out_rows.append(row)
 
     for g in graphs:
@@ -345,7 +387,7 @@ def write_xlsx(path, rows, a):
     info = wb.create_sheet("settings")
     info.append(["threshold_pct", a.threshold])
     for k, v in (("metric", a.metric), ("default_speed", a.default_speed),
-                 ("days", a.days or "all downloaded"), ("data_dir", a.data_dir), ("list", a.list)):
+                 ("days", a.days or "all downloaded"), ("data_dir", a.data_dir), ("list", a.list), ("speeds", a.speeds or "")):
         info.append([k, v])
     info.append([])
     info.append(["Edit speed_gbps or threshold_pct and the percentages and statuses recalculate."])
