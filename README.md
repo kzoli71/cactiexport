@@ -121,7 +121,11 @@ In the workbook `in_pct`, `out_pct`, `max_pct`, `status`, `link_max_pct` and
 `link_status` are formulas: change `speed_gbps` (in Gbit/s) on a row, or
 `threshold_pct` on the `settings` sheet, and they recalculate. Row colours
 follow the recalculated status. `link_max_pct` uses `MAXIFS` (Excel 2019 /
-Microsoft 365 or LibreOffice). Each row is one link end, or a whole link
+Microsoft 365 or LibreOffice).
+
+`graph_title` and `graph_url` link to the graph in Cacti. The base URL is taken
+from `cacti_url.txt`, which `cacti_download.py` writes into the data
+directory; for older downloads pass it with `--cacti-url`. Each row is one link end, or a whole link
 when both ends match the same graph:
 
 | Status | Meaning |

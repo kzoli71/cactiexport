@@ -221,6 +221,9 @@ def main():
         sys.exit("No graphs found. Check the tree URL, run again with --debug-dir to save the pages, or use --graph-ids.")
 
     os.makedirs(a.out_dir, exist_ok=True)
+    # remembered so cacti_analyze.py can link back to the graphs
+    with open(os.path.join(a.out_dir, "cacti_url.txt"), "w", encoding="utf-8") as f:
+        f.write(c.base + "\n")
     end = int(time.time())
     start = end - int(a.days * 86400)
     period = f"{datetime.fromtimestamp(start):%Y-%m-%d %H:%M} - {datetime.fromtimestamp(end):%Y-%m-%d %H:%M}"

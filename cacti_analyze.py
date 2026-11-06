@@ -180,6 +180,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default="data", help="directory written by cacti_download.py")
     ap.add_argument("--list", required=True, help="CSV: router1,interface1,router2,interface2[,speed]")
+    ap.add_argument("--cacti-url", help="Cacti base URL for graph links "
+                    "(default: cacti_url.txt written by cacti_download.py)")
     ap.add_argument("--speeds", help="file with router,interface,speed lines (e.g. 10G) to look speeds up in")
     ap.add_argument("--default-speed", default="10G", help="speed used when none is known (default 10G)")
     ap.add_argument("--days", type=float, help="only use the last N days of the downloaded data")
@@ -189,6 +191,13 @@ def main():
                     help="graph values are bytes/s (multiply by 8); default assumes bits/s")
     ap.add_argument("--out", default="result.xlsx", help="result file; .xlsx (needs openpyxl) or .csv")
     a = ap.parse_args()
+
+    cacti_url = a.cacti_url
+    url_file = os.path.join(a.data_dir, "cacti_url.txt")
+    if not cacti_url and os.path.exists(url_file):
+        with open(url_file, encoding="utf-8") as f:
+            cacti_url = f.read().strip()
+    cacti_url = cacti_url.rstrip("/") + "/" if cacti_url else None
 
     files = sorted(f for f in os.listdir(a.data_dir) if re.fullmatch(r"graph_\d+\.csv", f))
     if not files:
@@ -315,6 +324,11 @@ def main():
         r["link_max_pct"] = w
         r["link_status"] = ("OVER" if w > a.threshold else "OK") if w is not None else None
 
+    if cacti_url:
+        for r in out_rows:
+            if r["graph_id"] is not None:
+                r["graph_url"] = f"{cacti_url}graph.php?action=view&local_graph_id={r['graph_id']}&rra_id=all"
+
     order = {"OVER": 0, "NO_SPEED": 1, "NO_DATA": 2, "NO_GRAPH": 3, "OK": 4, "NOT_IN_LIST": 5}
     out_rows.sort(key=lambda r: (order.get(r["status"], 9), -(r["max_pct"] or 0)))
 
@@ -337,7 +351,7 @@ def main():
 
 COLUMNS = ["line", "side", "link", "router", "interface", "match", "graph_id", "graph_title",
            "speed_gbps", "in_bps", "out_bps", "in_pct", "out_pct", "max_pct", "status",
-           "link_max_pct", "link_status", "candidates"]
+           "link_max_pct", "link_status", "graph_url", "candidates"]
 
 
 def write_csv(path, rows):
@@ -413,6 +427,13 @@ def write_xlsx(path, rows, a):
                                   fill=PatternFill("solid", fgColor="F8CBAD"), stopIfTrue=True))
     ws.conditional_formatting.add(full, FormulaRule(formula=[f'OR({st}="NO_GRAPH",{st}="NO_DATA",{st}="NO_SPEED")'],
                                   fill=PatternFill("solid", fgColor="FFE699")))
+    # clickable graph title and url
+    for n, r in enumerate(rows, 2):
+        if r["graph_url"]:
+            for col in ("graph_title", "graph_url"):
+                cell = ws[f"{L[col]}{n}"]
+                cell.hyperlink = r["graph_url"]
+                cell.style = "Hyperlink"
     fallback_fill = PatternFill("solid", fgColor="DDEBF7")
     for n, r in enumerate(rows, 2):
         if r["match"] and r["match"].startswith("router_pair"):
@@ -423,7 +444,7 @@ def write_xlsx(path, rows, a):
         for row in ws.iter_rows(min_row=2, min_col=COLUMNS.index(name) + 1, max_col=COLUMNS.index(name) + 1):
             row[0].number_format = fmt_
 
-    widths = {"link": 40, "graph_title": 60, "candidates": 80, "router": 22, "interface": 22, "match": 22}
+    widths = {"link": 40, "graph_title": 60, "graph_url": 30, "candidates": 80, "router": 22, "interface": 22, "match": 22}
     for i, name in enumerate(COLUMNS, 1):
         ws.column_dimensions[get_column_letter(i)].width = widths.get(name, 14)
     ws.freeze_panes = "A2"
